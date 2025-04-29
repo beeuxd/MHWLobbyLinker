@@ -1,0 +1,29 @@
+entrypoint = "main.py"
+modules = ["python-3.8:v2-20230907-3d66d15"]
+
+hidden = [".pythonlibs"]
+
+[nix]
+channel = "stable-23_05"
+
+[env]
+LANG = "en_US.UTF-8"
+
+[workflows]
+runButton = "Run Bot"
+
+[[workflows.workflow]]
+name = "Run Bot"
+author = 42077945
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[deployment]
+run = ["sh", "-c", "python main.py"]

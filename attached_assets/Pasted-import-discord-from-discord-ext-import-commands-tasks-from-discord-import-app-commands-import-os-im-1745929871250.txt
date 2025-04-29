@@ -1,0 +1,125 @@
+import discord
+from discord.ext import commands, tasks
+from discord import app_commands
+import os
+import asyncio
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
+
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+lobbies = {}  # key = message_id, value = lobby data
+
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"🧙 Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"❌ Sync failed: {e}")
+    check_expired_lobbies.start()
+
+# Slash command: Create a lobby
+@bot.tree.command(name="createlobby", description="Create a Monster Hunter Wilds lobby")
+@app_commands.describe(code="Lobby code", description="Lobby description (optional)")
+async def createlobby(interaction: discord.Interaction, code: str, description: str = "No description"):
+    await interaction.response.defer()
+
+    expires_at = datetime.utcnow() + timedelta(hours=6)
+
+    embed = discord.Embed(
+        title="🦖 Monster Hunter Wilds Lobby",
+        description=f"**Code:** `{code}`\n**Description:** {description}\n**Expires in:** 6 hours",
+        color=discord.Color.green()
+    )
+    embed.set_footer(text=f"Created by {interaction.user.name} | Expires at {expires_at} UTC")
+
+    view = LobbyView(code, description, expires_at, interaction.user)
+    message = await interaction.followup.send(embed=embed, view=view)
+
+    # Save lobby info
+    lobbies[message.id] = {
+        "message": message,
+        "code": code,
+        "description": description,
+        "expires_at": expires_at,
+        "user": interaction.user,
+        "view": view
+    }
+
+# Slash command: List active lobbies
+@bot.tree.command(name="activelobbies", description="List all active Monster Hunter Wilds lobbies")
+async def activelobbies(interaction: discord.Interaction):
+    if not lobbies:
+        await interaction.response.send_message("No active lobbies right now. Be the first to hunt!", ephemeral=True)
+        return
+
+    embeds = []
+    for lobby in lobbies.values():
+        embed = discord.Embed(
+            title="🧭 Active Lobby",
+            description=f"**Code:** `{lobby['code']}`\n**Description:** {lobby['description']}\n**Expires at:** {lobby['expires_at'].strftime('%H:%M UTC')}",
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text=f"Created by {lobby['user'].name}")
+        embeds.append(embed)
+
+    await interaction.response.send_message(embeds=embeds)
+
+# View for buttons
+class LobbyView(discord.ui.View):
+    def __init__(self, code, description, expires_at, creator):
+        super().__init__(timeout=None)
+        self.code = code
+        self.description = description
+        self.expires_at = expires_at
+        self.creator = creator
+
+    @discord.ui.button(label="🔁 Refresh Lobby", style=discord.ButtonStyle.green)
+    async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.creator:
+            await interaction.response.send_message("Only the creator can refresh this lobby.", ephemeral=True)
+            return
+
+        self.expires_at = datetime.utcnow() + timedelta(hours=6)
+        lobby = lobbies.get(interaction.message.id)
+        if lobby:
+            lobby["expires_at"] = self.expires_at
+
+        embed = interaction.message.embeds[0]
+        embed.description = f"**Code:** `{self.code}`\n**Description:** {self.description}\n**Expires in:** 6 hours"
+        embed.set_footer(text=f"Created by {self.creator.name} | Expires at {self.expires_at} UTC")
+        await interaction.message.edit(embed=embed)
+        await interaction.response.send_message("Lobby refreshed! +6 hours added.", ephemeral=True)
+
+    @discord.ui.button(label="❌ Expire Now", style=discord.ButtonStyle.red)
+    async def expire(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.creator:
+            await interaction.response.send_message("Only the creator can expire this lobby.", ephemeral=True)
+            return
+
+        del lobbies[interaction.message.id]
+        await interaction.message.edit(content="❌ This lobby has expired.", embed=None, view=None)
+        await interaction.response.send_message("Lobby expired and removed.", ephemeral=True)
+
+# Background task to check expired lobbies
+@tasks.loop(minutes=1)
+async def check_expired_lobbies():
+    now = datetime.utcnow()
+    expired_ids = []
+    for msg_id, lobby in lobbies.items():
+        if now >= lobby["expires_at"]:
+            try:
+                await lobby["message"].edit(content="⏰ Lobby expired after 6 hours.", embed=None, view=None)
+                expired_ids.append(msg_id)
+            except Exception as e:
+                print(f"Error expiring lobby {msg_id}: {e}")
+    for msg_id in expired_ids:
+        del lobbies[msg_id]
+
+# Run the bot using token from .env
+bot.run(os.getenv("BOT_TOKEN"))

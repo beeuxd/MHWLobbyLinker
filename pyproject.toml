@@ -1,0 +1,6 @@
+[tool.pyright]
+useLibraryCodeForTypes = true
+
+[tool.ruff]
+select = ['E', 'W', 'F', 'I', 'B', 'C4', 'ARG', 'SIM']
+ignore = ['W291', 'W292', 'W293']
